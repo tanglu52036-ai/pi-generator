@@ -1,0 +1,6 @@
+{
+  "name": "LOYO Proforma Invoice Generator",
+  "description": "A tiered pricing-enabled invoice generator that fetches products from Google Sheets and allows PDF export.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
