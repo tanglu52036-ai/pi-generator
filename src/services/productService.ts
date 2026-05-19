@@ -4,7 +4,7 @@
  */
 
 import Papa from 'papaparse';
-import { Product } from '../types';
+import type { Product } from '../types';
 
 const SHEET_CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTOpGcKJ8qNwVDppl2t98vKthvoV0c_LOtTK3x-kGKiqFSpUddih2WRkWCkjLfqgl6GhVYJLjDOPDmN/pub?output=csv';
 
@@ -25,7 +25,6 @@ export const fetchProducts = async (): Promise<Product[]> => {
 
 const cleanPrice = (val: string): number => {
   if (!val) return 0;
-  // Remove currency symbols, commas, and whitespace
   const cleaned = val.replace(/[$,\s]/g, '');
   return parseFloat(cleaned) || 0;
 };

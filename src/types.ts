@@ -12,6 +12,11 @@ export interface Product {
   Price_101_300: string;
   Unit: string;
   Image: string;
+  Category: string;
+  Weight: string;
+  Box_Size: string;
+  Carton_Size: string;
+  Carton_Weight: string;
 }
 
 export interface Customer {

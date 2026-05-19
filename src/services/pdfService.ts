@@ -86,17 +86,21 @@ const getBase64Image = async (url: string): Promise<{ data: string, format: stri
   });
 };
 
-export const generatePDF = async (
+export async function exportToPDF(
+  invoiceInfo: InvoiceInfo,
   customer: Customer,
-  items: InvoiceItem[],
-  info: InvoiceInfo,
   seller: SellerInfo,
   bank: BankInfo,
   remarks: InvoiceRemarks,
-  fees: Fees
-) => {
-  try {
-    const doc = new jsPDF();
+  fees: Fees,
+  items: InvoiceItem[],
+  invoiceNumber: string,
+  customColumns: { id: string; name: string; insertAfterFixedCol?: number }[] = [],
+  customColumnValues: Record<string, Record<string, string>> = {},
+  productCustomRows: { id: string; label: string; value: string; beforeRowIndex?: number }[] = [],
+  merges: Record<string, Record<number, number>> = {},
+) {
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
     const pageWidth = doc.internal.pageSize.width;
     const pageHeight = doc.internal.pageSize.height;
     const margin = 10;
@@ -182,9 +186,9 @@ export const generatePDF = async (
       { l: 'Telephone/Fax:', v: customer.telFax },
       { l: 'Contact:', v: customer.contact },
       { l: 'Email Address:', v: customer.email },
-      { l: 'Invoice No.:', v: info.invoiceNo },
-      { l: 'Date:', v: info.date },
-      { l: 'payment:', v: info.payment }
+      { l: 'Invoice No.:', v: invoiceInfo.invoiceNo },
+      { l: 'Date:', v: invoiceInfo.date },
+      { l: 'payment:', v: invoiceInfo.payment }
     ];
 
     const labelColWidth = 45;
@@ -205,53 +209,166 @@ export const generatePDF = async (
     });
 
     // 4. Product Table
-    const totalAmount = items.reduce((sum, item) => sum + item.total, 0) + fees.shippingCost + fees.handlingFee + fees.tax;
+    const productCustomRowsTotal = productCustomRows.reduce((sum, r) => sum + (parseFloat(r.value) || 0), 0);
+    const itemsSubtotal = items.reduce((sum, item) => sum + item.total, 0) + productCustomRowsTotal;
+    const totalAmount = itemsSubtotal + fees.shippingCost + fees.handlingFee + fees.tax;
+
+    const buildMergedCols = (customs: typeof customColumns) => {
+      const sorted = [...customs].sort((a, b) => (a.insertAfterFixedCol ?? 7) - (b.insertAfterFixedCol ?? 7));
+      const result: Array<{ type: 'fixed'; idx: number } | { type: 'custom'; col: (typeof customs)[0] }> = [];
+      for (const c of sorted) { if ((c.insertAfterFixedCol ?? 7) < 0) result.push({ type: 'custom', col: c }); }
+      for (let f = 0; f < 8; f++) {
+        result.push({ type: 'fixed', idx: f });
+        for (const c of sorted) { if ((c.insertAfterFixedCol ?? 7) === f) result.push({ type: 'custom', col: c }); }
+      }
+      for (const c of sorted) { if ((c.insertAfterFixedCol ?? 7) >= 8) result.push({ type: 'custom', col: c }); }
+      return result;
+    };
+
+    const mergedCols = buildMergedCols(customColumns);
+    const mergedCount = mergedCols.length;
+
+    const makeRow = (item: InvoiceItem | null, customLabel: string, customAmount: string, n: string | number): (string | number)[] => {
+      return mergedCols.map(col => {
+        if (col.type === 'fixed') {
+          switch (col.idx) {
+            case 0: return n;
+            case 1: return customLabel || (item ? item.SKU : '');
+            case 2: return '';
+            case 3: return customLabel ? '' : (item ? item.Name : '');
+            case 4: return item ? item.quantity : '';
+            case 5: return item && item.Unit ? item.Unit : '/';
+            case 6: return item ? formatCurrency(item.selectedPrice, invoiceInfo.currency) : '';
+            case 7: return customAmount || (item ? formatCurrency(item.total, invoiceInfo.currency) : '');
+          }
+        }
+        return item && col.type === 'custom' ? (customColumnValues[item.id]?.[col.col.id] || '') : '';
+      });
+    };
+
+    const sortedCustoms = productCustomRows.filter(r => r.beforeRowIndex !== undefined).sort((a, b) => (a.beforeRowIndex ?? 0) - (b.beforeRowIndex ?? 0));
+    const legacyCustoms = productCustomRows.filter(r => r.beforeRowIndex === undefined);
+    const bodyData: (string | number)[][] = [];
+    const bodyRowIds: string[] = [];
+    let ci = 0;
+    for (let i = 0; i <= items.length; i++) {
+      while (ci < sortedCustoms.length && (sortedCustoms[ci].beforeRowIndex ?? 0) <= i) {
+        const row = sortedCustoms[ci];
+        bodyData.push(makeRow(null, row.label, formatCurrency(parseFloat(row.value) || 0, invoiceInfo.currency), ''));
+        bodyRowIds.push(row.id);
+        ci++;
+      }
+      if (i < items.length) {
+        const item = items[i];
+        bodyData.push(makeRow(item, '', '', i + 1));
+        bodyRowIds.push(item.id);
+      }
+    }
+    while (ci < sortedCustoms.length) {
+      const row = sortedCustoms[ci];
+      bodyData.push(makeRow(null, row.label, formatCurrency(parseFloat(row.value) || 0, invoiceInfo.currency), ''));
+      bodyRowIds.push(row.id);
+      ci++;
+    }
+    for (const row of legacyCustoms) {
+      bodyData.push(makeRow(null, row.label, formatCurrency(parseFloat(row.value) || 0, invoiceInfo.currency), ''));
+      bodyRowIds.push(row.id);
+    }
+
+    const summaryStartIndex = bodyData.length;
+
+    const makeSummaryRow = (label: string, amount: string): (string | number)[] => {
+      return mergedCols.map(col => {
+        if (col.type === 'fixed') {
+          if (col.idx === 1) return label;
+          if (col.idx === 3 && label === 'TOTAL') return `TOTAL (${invoiceInfo.currency})`;
+          if (col.idx === 7) return amount;
+        }
+        return '';
+      });
+    };
+
+    bodyData.push(makeSummaryRow('Shipping Cost', formatCurrency(fees.shippingCost, invoiceInfo.currency)));
+    bodyData.push(makeSummaryRow('Handing Fee', formatCurrency(fees.handlingFee, invoiceInfo.currency)));
+    bodyData.push(makeSummaryRow('TOTAL', formatCurrency(totalAmount, invoiceInfo.currency)));
+
+    const productImageMap = new Map<number, number>();
+    let dataRowIdx = 0;
+    let productIdx = 0;
+    ci = 0;
+    for (let i = 0; i <= items.length; i++) {
+      while (ci < sortedCustoms.length && (sortedCustoms[ci].beforeRowIndex ?? 0) <= i) { dataRowIdx++; ci++; }
+      if (i < items.length) { productImageMap.set(dataRowIdx, productIdx); dataRowIdx++; productIdx++; }
+    }
+
+    const fixedWidths = [8, 25, 35, 60, 10, 12, 20, 20];
+    const customColWidth = 18;
+    const totalContentWidth = 190;
+    let totalRequested = 0;
+    mergedCols.forEach(col => {
+      totalRequested += col.type === 'fixed' ? fixedWidths[col.idx] : customColWidth;
+    });
+    const shrink = totalRequested > totalContentWidth ? totalContentWidth / totalRequested : 1;
+
+    const columnStyles: Record<number, any> = {};
+    mergedCols.forEach((col, i) => {
+      if (col.type === 'fixed') {
+        const base = fixedWidths[col.idx] * shrink;
+        columnStyles[i] = { cellWidth: base };
+        if (col.idx === 0) columnStyles[i].halign = 'center';
+        if (col.idx === 1) { columnStyles[i].halign = 'center'; columnStyles[i].fontStyle = 'bold'; }
+        if (col.idx === 2) { columnStyles[i].halign = 'center'; columnStyles[i].minCellHeight = 25; }
+        if (col.idx === 4) columnStyles[i].halign = 'center';
+        if (col.idx === 5) columnStyles[i].halign = 'center';
+        if (col.idx === 6) columnStyles[i].halign = 'right';
+        if (col.idx === 7) { columnStyles[i].halign = 'right'; columnStyles[i].fontStyle = 'bold'; }
+      } else {
+        columnStyles[i] = { cellWidth: customColWidth * shrink, halign: 'center' };
+      }
+    });
+
+    const headRow = mergedCols.map(col => {
+      const names: string[] = ['N', 'Model No', 'Picture', 'Description', 'QTY', 'Units', `Unit Price (${invoiceInfo.currency})`, `Amount(${invoiceInfo.currency})`];
+      if (col.type === 'fixed') return names[col.idx] || '';
+      return col.col.name;
+    });
+
+    const pictureVisIdx = mergedCols.findIndex(c => c.type === 'fixed' && c.idx === 2);
 
     autoTable(doc, {
       startY: currentY,
-      head: [['N', 'Model No', 'Picture', 'Description', 'QTY', 'Units', `Unit Price (${info.currency})`, `Amount(${info.currency})`]],
-      body: [
-        ...items.map((item, i) => [
-          i + 1,
-          item.SKU,
-          '',
-          item.Name,
-          item.quantity,
-          item.Unit || '/',
-          formatCurrency(item.selectedPrice, info.currency),
-          formatCurrency(item.total, info.currency)
-        ]),
-        ['', 'Shipping Cost', '', '', '', '', '', formatCurrency(fees.shippingCost, info.currency)],
-        ['', 'Handing Fee', '', '', '', '', '', formatCurrency(fees.handlingFee, info.currency)],
-        ['', 'TOTAL', '', `TOTAL (${info.currency})`, '', '', '', formatCurrency(totalAmount, info.currency)]
-      ],
+      head: [headRow],
+      body: bodyData,
       didDrawCell: (data) => {
-        if (data.section === 'body' && data.column.index === 2 && data.row.index < items.length) {
-          const res = imagesResults[data.row.index];
-          const dims = imageDimensions[data.row.index];
-          if (res && dims) {
-            try {
-              const padding = 4;
-              const availableW = data.cell.width - padding;
-              const availableH = data.cell.height - padding;
+        if (data.section === 'body' && data.column.index === pictureVisIdx) {
+          const imgIdx = productImageMap.get(data.row.index);
+          if (imgIdx !== undefined) {
+            const res = imagesResults[imgIdx];
+            const dims = imageDimensions[imgIdx];
+            if (res && dims) {
+              try {
+                const padding = 4;
+                const availableW = data.cell.width - padding;
+                const availableH = data.cell.height - padding;
 
-              const imgRatio = dims.width / dims.height;
-              const cellRatio = availableW / availableH;
+                const imgRatio = dims.width / dims.height;
+                const cellRatio = availableW / availableH;
 
-              let imgW: number, imgH: number;
-              if (imgRatio > cellRatio) {
-                imgW = availableW;
-                imgH = availableW / imgRatio;
-              } else {
-                imgH = availableH;
-                imgW = availableH * imgRatio;
-              }
+                let imgW: number, imgH: number;
+                if (imgRatio > cellRatio) {
+                  imgW = availableW;
+                  imgH = availableW / imgRatio;
+                } else {
+                  imgH = availableH;
+                  imgW = availableH * imgRatio;
+                }
 
-              const imgX = data.cell.x + (data.cell.width - imgW) / 2;
-              const imgY = data.cell.y + (data.cell.height - imgH) / 2;
+                const imgX = data.cell.x + (data.cell.width - imgW) / 2;
+                const imgY = data.cell.y + (data.cell.height - imgH) / 2;
 
-              doc.addImage(res.data, res.format as any, imgX, imgY, imgW, imgH, undefined, 'FAST');
-            } catch (e) {}
+                doc.addImage(res.data, res.format as any, imgX, imgY, imgW, imgH, undefined, 'FAST');
+              } catch (e) {}
+            }
           }
         }
       },
@@ -268,21 +385,21 @@ export const generatePDF = async (
         textColor: [255, 255, 255],
         halign: 'center'
       },
-      columnStyles: {
-        0: { halign: 'center', cellWidth: 8 },
-        1: { halign: 'center', cellWidth: 25, fontStyle: 'bold' },
-        2: { halign: 'center', cellWidth: 35, minCellHeight: 25 },
-        3: { cellWidth: 60 },
-        4: { halign: 'center', cellWidth: 10 },
-        5: { halign: 'center', cellWidth: 12 },
-        6: { halign: 'right', cellWidth: 20 },
-        7: { halign: 'right', cellWidth: 20, fontStyle: 'bold' }
-      },
+      columnStyles,
       didParseCell: (data) => {
-        if (data.row.index >= items.length) {
+        if (data.section === 'body') {
+          const rowId = bodyRowIds[data.row.index];
+          if (rowId && merges[rowId]) {
+            const rowMerges = merges[rowId];
+            if (rowMerges[data.column.index]) {
+              (data.cell as any).colSpan = rowMerges[data.column.index];
+            }
+          }
+        }
+        if (data.row.index >= summaryStartIndex) {
            data.cell.styles.fontStyle = 'bold';
            data.cell.styles.minCellHeight = 7;
-           if (data.section === 'body' && data.row.index === items.length + 2) {
+           if (data.section === 'body' && data.row.index === summaryStartIndex + 2) {
               data.cell.styles.textColor = [220, 38, 38];
               data.cell.styles.fillColor = [248, 250, 252];
            }
@@ -394,9 +511,5 @@ export const generatePDF = async (
     currentY += 3.5;
     doc.text('Any discrepancies should be reported within 3 working days.', margin, currentY);
 
-    doc.save(`PI_${info.invoiceNo}.pdf`);
-  } catch (error) {
-    console.error('PDF generation failed:', error);
-    throw error;
-  }
-};
+    doc.save(`PI_${invoiceInfo.invoiceNo}.pdf`);
+}

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import Fuse from 'fuse.js';
 import { Search, Loader2, Plus, X } from 'lucide-react';
 import { Product } from '../types';
@@ -11,20 +11,23 @@ import { fetchProducts } from '../services/productService';
 
 interface ProductSearchProps {
   onAddProduct: (product: Product) => void;
+  onRequestManualAdd?: () => void;
 }
 
-export const ProductSearch: React.FC<ProductSearchProps> = ({ onAddProduct }) => {
+const ALL = '___ALL___';
+
+export const ProductSearch: React.FC<ProductSearchProps> = ({ onAddProduct, onRequestManualAdd }) => {
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<Product[]>([]);
   const [showDropdown, setShowDropdown] = useState(false);
+  const [selectedCategory, setSelectedCategory] = useState<string>(ALL);
 
   useEffect(() => {
     const loadProducts = async () => {
       try {
         const data = await fetchProducts();
-        // Filter out empty rows if any
         setProducts(data.filter(p => p.SKU));
       } catch (error) {
         console.error('Failed to load products:', error);
@@ -35,10 +38,21 @@ export const ProductSearch: React.FC<ProductSearchProps> = ({ onAddProduct }) =>
     loadProducts();
   }, []);
 
-  const fuse = new Fuse(products, {
+  const categories = useMemo(() => {
+    const cats = new Set<string>();
+    products.forEach(p => { if (p.Category) cats.add(p.Category); });
+    return Array.from(cats).sort();
+  }, [products]);
+
+  const categoryFiltered = useMemo(() => {
+    if (selectedCategory === ALL) return products;
+    return products.filter(p => p.Category === selectedCategory);
+  }, [products, selectedCategory]);
+
+  const fuse = useMemo(() => new Fuse(categoryFiltered, {
     keys: ['SKU', 'Name'],
     threshold: 0.3,
-  });
+  }), [categoryFiltered]);
 
   useEffect(() => {
     if (query.length >= 2) {
@@ -49,7 +63,7 @@ export const ProductSearch: React.FC<ProductSearchProps> = ({ onAddProduct }) =>
       setResults([]);
       setShowDropdown(false);
     }
-  }, [query]);
+  }, [query, fuse]);
 
   const handleSelect = (product: Product) => {
     onAddProduct(product);
@@ -85,6 +99,34 @@ export const ProductSearch: React.FC<ProductSearchProps> = ({ onAddProduct }) =>
         )}
       </div>
 
+      {categories.length > 0 && (
+        <div className="flex items-center gap-1 mt-2 flex-wrap">
+          <button
+            onClick={() => setSelectedCategory(ALL)}
+            className={`px-2 py-1 rounded-md text-[10px] font-bold transition-colors cursor-pointer ${
+              selectedCategory === ALL
+                ? 'bg-blue-600 text-white'
+                : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+            }`}
+          >
+            All
+          </button>
+          {categories.map(cat => (
+            <button
+              key={cat}
+              onClick={() => setSelectedCategory(cat === selectedCategory ? ALL : cat)}
+              className={`px-2 py-1 rounded-md text-[10px] font-bold transition-colors cursor-pointer truncate max-w-[120px] ${
+                selectedCategory === cat
+                  ? 'bg-amber-500 text-white'
+                  : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+              }`}
+            >
+              {cat}
+            </button>
+          ))}
+        </div>
+      )}
+
       {showDropdown && results.length > 0 && (
         <div className="absolute mt-2 w-72 bg-white border border-slate-200 rounded-lg shadow-xl overflow-hidden max-h-96 overflow-y-auto animate-in fade-in slide-in-from-top-1 duration-200 left-0">
           {results.map((product) => (
@@ -106,6 +148,9 @@ export const ProductSearch: React.FC<ProductSearchProps> = ({ onAddProduct }) =>
                   {product.SKU}
                 </p>
                 <p className="text-[10px] text-slate-500 truncate font-medium">{product.Name}</p>
+                {product.Category && (
+                  <p className="text-[9px] text-amber-600 font-medium mt-0.5">{product.Category}</p>
+                )}
               </div>
               <div className="text-right">
                 <p className="text-[10px] font-black text-blue-600 tracking-tighter">${product.Price_1_20}</p>
@@ -117,8 +162,16 @@ export const ProductSearch: React.FC<ProductSearchProps> = ({ onAddProduct }) =>
       )}
 
       {showDropdown && results.length === 0 && query.length >= 2 && (
-        <div className="absolute mt-2 w-72 bg-white border border-slate-200 rounded-lg shadow-xl p-5 text-center text-slate-400 text-xs">
-          Not found "{query}"
+        <div className="absolute mt-2 w-72 bg-white border border-slate-200 rounded-lg shadow-xl p-4 text-center">
+          <p className="text-slate-400 text-xs mb-2">Not found "{query}"</p>
+          {onRequestManualAdd && (
+            <button
+              onClick={() => { onRequestManualAdd(); setQuery(''); setShowDropdown(false); }}
+              className="text-xs font-bold text-blue-600 hover:text-blue-700 hover:bg-blue-50 px-3 py-1.5 rounded-md transition-colors cursor-pointer"
+            >
+              + Add Manually
+            </button>
+          )}
         </div>
       )}
     </div>
