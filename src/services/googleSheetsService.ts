@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import serviceAccountKey from './config/my-project-trae-496420-07dd17da35dc.json';
+const serviceAccountKey = JSON.parse(import.meta.env.VITE_GOOGLE_CREDENTIALS || '{}');
 import type { Product } from '../types';
 
 const SPREADSHEET_ID = '1y95e1Aaca4u0LQSUALGyZH2auaKXF_Y2CVeaDHxjwhk';
