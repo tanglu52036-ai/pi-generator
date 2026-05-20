@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-const IMGBB_API = '/api/imgbb/1/upload';
+const IMGBB_API = 'https://api.imgbb.com/1/upload';
 const IMGBB_KEY = 'cbedc5a2280b020e99af3c40d99517ea';
 
 interface ImgBBImage {
