@@ -723,10 +723,9 @@ export default function App() {
                               case 1:
                                 if (isProduct && item) content = (
                                   <button onClick={(e) => {
-                                    if (!item.Weight && !item.Box_Size && !item.Carton_Size && !item.Carton_Weight) return;
                                     const rect = (e.target as HTMLElement).getBoundingClientRect();
                                     setSkuPopover({ item, x: rect.left + rect.width / 2, y: rect.bottom + 4 });
-                                  }} className={`font-bold text-left w-full px-1 ${(item.Weight || item.Box_Size || item.Carton_Size || item.Carton_Weight) ? 'cursor-pointer text-blue-700 hover:underline decoration-dotted' : ''}`}>
+                                  }} className="font-bold text-left w-full px-1 text-blue-700 cursor-pointer hover:underline decoration-dotted">
                                     {item.SKU}
                                   </button>
                                 );
