@@ -193,8 +193,11 @@ export async function exportToPDF(
 
     const labelColWidth = 45;
     doc.setFontSize(9);
+    const buyerLineH = doc.getTextDimensions('T').h * 1.15;
     buyerLabels.forEach((item) => {
-      const rowHeight = item.rows ? item.rows * 6 : 6;
+      const valueLines = doc.splitTextToSize(item.v, contentWidth - labelColWidth - 5);
+      const textBlockHeight = valueLines.length > 1 ? (valueLines.length - 1) * buyerLineH : 0;
+      const rowHeight = Math.max(7, textBlockHeight + doc.getTextDimensions('T').h + 3);
       doc.rect(margin, currentY, contentWidth, rowHeight);
       doc.rect(margin, currentY, labelColWidth, rowHeight);
       
@@ -202,8 +205,7 @@ export async function exportToPDF(
       doc.text(item.l, margin + labelColWidth - 2, currentY + (rowHeight / 2) + 1, { align: 'right' });
       
       doc.setFont('helvetica', item.l === 'Company Name:' || item.l === 'payment:' ? 'bold' : 'normal');
-      const valueLines = doc.splitTextToSize(item.v, contentWidth - labelColWidth - 5);
-      doc.text(valueLines, margin + labelColWidth + 2, currentY + (rowHeight / 2) + 1 - (valueLines.length > 1 ? 2 : 0));
+      doc.text(valueLines, margin + labelColWidth + 2, currentY + (rowHeight / 2) - (textBlockHeight / 2) + 1);
       
       currentY += rowHeight;
     });
