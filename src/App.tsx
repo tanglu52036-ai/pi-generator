@@ -565,9 +565,9 @@ export default function App() {
                   <div className="w-48 bg-white border-r border-black px-2 py-1 text-right font-bold">Company Name:</div>
                   <div className="flex-1 px-2 py-1 relative"><InlineInput value={customer.companyName} onChange={(v: string) => setCustomer({...customer, companyName: v})} className="font-bold border-none" /></div>
                 </div>
-                <div className="flex min-h-[60px] group/row">
+                <div className="flex h-auto group/row">
                   <div className="w-48 border-r border-black px-2 py-1 text-right font-bold flex items-center justify-end">Address:</div>
-                  <div className="flex-1 px-2 py-1 relative"><InlineInput value={customer.address} onChange={(v: string) => setCustomer({...customer, address: v})} rows={3} className="border-none" /></div>
+                  <div className="flex-1 px-2 py-1 relative"><InlineInput value={customer.address} onChange={(v: string) => setCustomer({...customer, address: v})} rows={3} className="border-none whitespace-pre-wrap break-words" /></div>
                 </div>
                 <div className="flex group/row">
                   <div className="w-48 border-r border-black px-2 py-1 text-right font-bold">Telephone/Fax:</div>

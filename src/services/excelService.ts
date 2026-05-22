@@ -150,7 +150,16 @@ export const exportToExcel = async (
   for (const [label, val, b] of buyerRows) {
     cell(r, 1, label, { bold: true, sz: 10, align: 'right' });
     merge(r, 2, r, tCols, val, { sz: 10, align: 'left', bold: !!b });
-    h(r, 22); r++;
+    for (let col = 2; col <= tCols; col++) {
+      ws.getCell(r, col).alignment = { vertical: 'middle', horizontal: 'left', wrapText: true };
+    }
+    if (label === 'Address:' && val && val.length > 35) {
+      const estimatedLines = Math.ceil(val.length / 45);
+      h(r, Math.max(22, estimatedLines * 15 + 8));
+    } else {
+      h(r, 22);
+    }
+    r++;
   }
 
   r++;
