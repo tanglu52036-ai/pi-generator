@@ -13,6 +13,37 @@ const formatCurrency = (amount: number, currency: string): string => {
   return formatted + ' ' + currency;
 };
 
+const sanitizeText = (text: string): string => {
+  if (!text) return text;
+  const map: Record<string, string> = {
+    '°': 'deg', '®': '(R)', '™': '(TM)',
+    '–': '-', '—': '-', '•': '*', '·': '.',
+    '→': '->', '←': '<-', '±': '+/-', '×': 'x',
+    '÷': '/', '¢': 'c', '£': 'GBP', '¥': 'YEN',
+    '€': 'EUR', '∞': 'inf', '≈': '~', '≠': '!=',
+    '≤': '<=', '≥': '>=', '²': '2', '³': '3',
+    'µ': 'u', '✓': '', '✗': '',
+    '\u2018': "'", '\u2019': "'", '\u201C': '"', '\u201D': '"',
+    '\u2026': '...', '\u2032': "'", '\u2033': '"',
+    '\u00A0': ' ', '\u2000': ' ', '\u2001': ' ', '\u2002': ' ',
+    '\u2003': ' ', '\u2004': ' ', '\u2005': ' ', '\u2006': ' ',
+    '\u2007': ' ', '\u2008': ' ', '\u2009': ' ', '\u200A': ' ',
+    '\u200B': '', '\u200C': '', '\u200D': '', '\u2028': '',
+    '\u2029': '', '\uFEFF': '', '\u3000': ' ',
+    '：': ':', '；': ';', '，': ',', '。': '.',
+    '！': '!', '？': '?', '（': '(', '）': ')',
+    '【': '[', '】': ']', '《': '<', '》': '>',
+    '＂': '"', '＇': "'", '＆': '&', '＠': '@',
+    '＃': '#', '＄': '$', '％': '%', '＾': '^',
+    '＊': '*', '＋': '+', '＝': '=', '｀': '`',
+    '｛': '{', '｝': '}', '｜': '|', '＼': '\\',
+    '～': '~',
+  };
+  let result = text.normalize('NFC');
+  result = result.replace(/[^\x20-\x7E\xA0-\xFF]/g, (ch) => map[ch] !== undefined ? map[ch] : '');
+  return result;
+};
+
 const getImageDimensions = (dataUrl: string): Promise<{ width: number, height: number } | null> => {
   return new Promise((resolve) => {
     const img = new Image();
@@ -99,6 +130,10 @@ export async function exportToPDF(
   customColumnValues: Record<string, Record<string, string>> = {},
   productCustomRows: { id: string; label: string; value: string; beforeRowIndex?: number }[] = [],
   merges: Record<string, Record<number, number>> = {},
+  buyerCustomRows: { id: string; label: string; value: string }[] = [],
+  remarkCustomRows: { id: string; label: string; value: string }[] = [],
+  paypalCustomRows: { id: string; label: string; value: string }[] = [],
+  bankCustomRows: { id: string; label: string; value: string }[] = [],
 ) {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
     const pageWidth = doc.internal.pageSize.width;
@@ -195,7 +230,7 @@ export async function exportToPDF(
     doc.setFontSize(9);
     const buyerLineH = doc.getTextDimensions('T').h * 1.15;
     buyerLabels.forEach((item) => {
-      const valueLines = doc.splitTextToSize(item.v, contentWidth - labelColWidth - 5);
+      const valueLines = doc.splitTextToSize(sanitizeText(item.v), contentWidth - labelColWidth - 5);
       const textBlockHeight = valueLines.length > 1 ? (valueLines.length - 1) * buyerLineH : 0;
       const rowHeight = Math.max(7, textBlockHeight + doc.getTextDimensions('T').h + 3);
       doc.rect(margin, currentY, contentWidth, rowHeight);
@@ -210,10 +245,30 @@ export async function exportToPDF(
       currentY += rowHeight;
     });
 
+    buyerCustomRows.forEach((row) => {
+      const valueLines = doc.splitTextToSize(sanitizeText(row.value), contentWidth - labelColWidth - 5);
+      const textBlockHeight = valueLines.length > 1 ? (valueLines.length - 1) * buyerLineH : 0;
+      const rowHeight = Math.max(7, textBlockHeight + doc.getTextDimensions('T').h + 3);
+      doc.rect(margin, currentY, contentWidth, rowHeight);
+      doc.rect(margin, currentY, labelColWidth, rowHeight);
+      doc.setFont('helvetica', 'bold');
+      doc.text(sanitizeText(row.label || ''), margin + labelColWidth - 2, currentY + (rowHeight / 2) + 1, { align: 'right' });
+      doc.setFont('helvetica', 'normal');
+      doc.text(valueLines, margin + labelColWidth + 2, currentY + (rowHeight / 2) - (textBlockHeight / 2) + 1);
+      currentY += rowHeight;
+    });
+
     // 4. Product Table
     const productCustomRowsTotal = productCustomRows.reduce((sum, r) => sum + (parseFloat(r.value) || 0), 0);
     const itemsSubtotal = items.reduce((sum, item) => sum + item.total, 0) + productCustomRowsTotal;
     const totalAmount = itemsSubtotal + fees.shippingCost + fees.handlingFee + fees.tax;
+
+    const effectiveDeposit = invoiceInfo.paymentType === 'deposit'
+      ? (invoiceInfo.depositMethod === 'percentage'
+        ? totalAmount * (invoiceInfo.depositPercentage / 100)
+        : invoiceInfo.depositAmount)
+      : 0;
+    const balanceAmount = Math.max(0, totalAmount - effectiveDeposit);
 
     const buildMergedCols = (customs: typeof customColumns) => {
       const sorted = [...customs].sort((a, b) => (a.insertAfterFixedCol ?? 7) - (b.insertAfterFixedCol ?? 7));
@@ -237,7 +292,7 @@ export async function exportToPDF(
             case 0: return n;
             case 1: return customLabel || (item ? item.SKU : '');
             case 2: return '';
-            case 3: return customLabel ? '' : (item ? item.Name : '');
+            case 3: return customLabel ? '' : (item ? sanitizeText(item.Name) : '');
             case 4: return item ? item.quantity : '';
             case 5: return item && item.Unit ? item.Unit : '/';
             case 6: return item ? formatCurrency(item.selectedPrice, invoiceInfo.currency) : '';
@@ -250,6 +305,7 @@ export async function exportToPDF(
 
     const sortedCustoms = productCustomRows.filter(r => r.beforeRowIndex !== undefined).sort((a, b) => (a.beforeRowIndex ?? 0) - (b.beforeRowIndex ?? 0));
     const legacyCustoms = productCustomRows.filter(r => r.beforeRowIndex === undefined);
+    const customRowIdSet = new Set(productCustomRows.map(r => r.id));
     const bodyData: (string | number)[][] = [];
     const bodyRowIds: string[] = [];
     let ci = 0;
@@ -293,6 +349,13 @@ export async function exportToPDF(
     bodyData.push(makeSummaryRow('Shipping Cost', formatCurrency(fees.shippingCost, invoiceInfo.currency)));
     bodyData.push(makeSummaryRow('Handing Fee', formatCurrency(fees.handlingFee, invoiceInfo.currency)));
     bodyData.push(makeSummaryRow('TOTAL', formatCurrency(totalAmount, invoiceInfo.currency)));
+    if (invoiceInfo.paymentType === 'deposit') {
+      const depositLabel = invoiceInfo.depositMethod === 'percentage'
+        ? `Deposit (${invoiceInfo.depositPercentage}%)`
+        : 'Deposit';
+      bodyData.push(makeSummaryRow(depositLabel, formatCurrency(effectiveDeposit, invoiceInfo.currency)));
+      bodyData.push(makeSummaryRow('Balance', formatCurrency(balanceAmount, invoiceInfo.currency)));
+    }
 
     const productImageMap = new Map<number, number>();
     let dataRowIdx = 0;
@@ -391,6 +454,9 @@ export async function exportToPDF(
       didParseCell: (data) => {
         if (data.section === 'body') {
           const rowId = bodyRowIds[data.row.index];
+          if (customRowIdSet.has(rowId)) {
+            data.cell.styles.minCellHeight = 7;
+          }
           if (rowId && merges[rowId]) {
             const rowMerges = merges[rowId];
             if (rowMerges[data.column.index]) {
@@ -429,18 +495,27 @@ export async function exportToPDF(
     const drawRemarkLine = (label: string, value: string, y: number) => {
       doc.setFont('helvetica', 'bold');
       doc.rect(margin, y, contentWidth, 4);
-      doc.text(label, margin + 15, y + 3);
+      doc.text(sanitizeText(label), margin + 15, y + 3);
       doc.setFont('helvetica', 'normal');
-      doc.text(value, margin + 45, y + 3);
+      doc.text(sanitizeText(value), margin + 45, y + 3);
     };
 
     drawRemarkLine('SHIPPING DAY:', remarks.shippingDay, currentY + 4);
     drawRemarkLine('WARRANTY:', remarks.warranty, currentY + 8);
     drawRemarkLine('PACKING:', remarks.packing, currentY + 12);
     drawRemarkLine('SHIPMENT:', `FROM GUANGZHOU TO ${remarks.shipmentTo}`, currentY + 16);
-    
-    currentY += 22;
 
+    let remarkCursor = currentY + 20;
+    remarkCustomRows.forEach((row) => {
+      if (remarkCursor + 4 > pageHeight - 60) {
+        doc.addPage();
+        remarkCursor = margin;
+      }
+      drawRemarkLine(row.label || '', row.value, remarkCursor);
+      remarkCursor += 4;
+    });
+
+    currentY = Math.max(currentY + 22, remarkCursor + 2);
     if (currentY > pageHeight - 60) {
       doc.addPage();
       currentY = margin;
@@ -460,8 +535,21 @@ export async function exportToPDF(
     doc.rect(margin, currentY, labelColWidth, 8);
     doc.text('ACCOUNT NAME:', margin + labelColWidth - 2, currentY + 5, { align: 'right' });
     doc.setFontSize(11);
-    doc.text(bank.paypalAccount, margin + labelColWidth + 2, currentY + 5);
+    doc.text(sanitizeText(bank.paypalAccount), margin + labelColWidth + 2, currentY + 5);
     currentY += 8;
+
+    paypalCustomRows.forEach((row) => {
+      const rh = 7;
+      if (currentY + rh > pageHeight - 60) { doc.addPage(); currentY = margin; }
+      doc.setFontSize(9);
+      doc.setFont('helvetica', 'bold');
+      doc.rect(margin, currentY, contentWidth, rh);
+      doc.rect(margin, currentY, labelColWidth, rh);
+      doc.text(sanitizeText(row.label || ''), margin + labelColWidth - 2, currentY + (rh / 2) + 1, { align: 'right' });
+      doc.setFont('helvetica', 'normal');
+      doc.text(sanitizeText(row.value), margin + labelColWidth + 2, currentY + (rh / 2) + 1);
+      currentY += rh;
+    });
 
     // 7. Bank Information
     doc.rect(margin, currentY, contentWidth, 5);
@@ -487,7 +575,7 @@ export async function exportToPDF(
     const lineHeight = doc.getTextDimensions('T').h * 1.15;
     bankRows.forEach((row) => {
       const valueWidth = contentWidth - bankLabelWidth - 5;
-      const valueLines = doc.splitTextToSize(row.v, valueWidth);
+      const valueLines = doc.splitTextToSize(sanitizeText(row.v), valueWidth);
       const textBlockHeight = valueLines.length > 1 ? (valueLines.length - 1) * lineHeight : 0;
       const rowHeight = Math.max(7, textBlockHeight + doc.getTextDimensions('T').h + 3);
 
@@ -502,6 +590,19 @@ export async function exportToPDF(
       doc.text(row.l, margin + bankLabelWidth - 2, currentY + (rowHeight / 2) + 1, { align: 'right' });
       doc.text(valueLines, margin + bankLabelWidth + 2, currentY + (rowHeight / 2) - (textBlockHeight / 2) + 1);
       currentY += rowHeight;
+    });
+
+    bankCustomRows.forEach((row) => {
+      const rh = 7;
+      if (currentY + rh > pageHeight - margin) { doc.addPage(); currentY = margin; }
+      doc.setFontSize(9);
+      doc.setFont('helvetica', 'bold');
+      doc.rect(margin, currentY, contentWidth, rh);
+      doc.rect(margin, currentY, bankLabelWidth, rh);
+      doc.text(sanitizeText(row.label || ''), margin + bankLabelWidth - 2, currentY + (rh / 2) + 1, { align: 'right' });
+      doc.setFont('helvetica', 'normal');
+      doc.text(sanitizeText(row.value), margin + bankLabelWidth + 2, currentY + (rh / 2) + 1);
+      currentY += rh;
     });
 
     // 8. Disclaimer

@@ -82,7 +82,7 @@ export default function App() {
   const [bank, setBank] = useState<BankInfo>({
     accountName: 'HONGKONG LOYO ELECTRONIC TECHNOLOGY LIMITED',
     accountAddress: 'ROOM 1, 16/F, EMPRESS PLAZA17-19 CHATHAM ROAD SOUTH TSIMSHA TSUI,KL',
-    beneficiaryBank: 'HSBC',
+    beneficiaryBank: 'HSBC HONGKONG',
     bankAddress: "1 Queen's Road Central, Hong Kong",
     accountNumber: '817-599897-838',
     swiftCode: 'HSBCHKHHHKH',
@@ -107,6 +107,10 @@ export default function App() {
     date: new Date().toISOString().split('T')[0],
     payment: 'PayPal/Bank Transfer',
     currency: 'USD',
+    paymentType: 'full',
+    depositMethod: 'fixed',
+    depositAmount: 0,
+    depositPercentage: 30,
   });
 
   const [items, setItems] = useState<InvoiceItem[]>([]);
@@ -261,7 +265,7 @@ export default function App() {
       alert('Please add products first!');
       return;
     }
-    await exportToPDF(invoiceInfo, customer, seller, bank, remarks, fees, items, invoiceInfo.invoiceNo, customColumns, customColumnValues, productCustomRows, merges);
+    await exportToPDF(invoiceInfo, customer, seller, bank, remarks, fees, items, invoiceInfo.invoiceNo, customColumns, customColumnValues, productCustomRows, merges, buyerCustomRows, remarkCustomRows, paypalCustomRows, bankCustomRows);
   };
 
   const handleExportExcel = async () => {
@@ -269,7 +273,7 @@ export default function App() {
       alert('Please add products first!');
       return;
     }
-    await exportToExcel(customer, items, invoiceInfo, seller, fees, bank, remarks, customColumns, customColumnValues, productCustomRows);
+    await exportToExcel(customer, items, invoiceInfo, seller, fees, bank, remarks, customColumns, customColumnValues, productCustomRows, buyerCustomRows, remarkCustomRows, paypalCustomRows, bankCustomRows);
   };
 
   const addCustomRow = (setter: Dispatch<SetStateAction<CustomRow[]>>) => {
@@ -291,6 +295,13 @@ export default function App() {
   const productCustomRowsTotal = productCustomRows.reduce((sum, r) => sum + (parseFloat(r.value) || 0), 0);
   const subtotal = items.reduce((sum, item) => sum + item.total, 0) + productCustomRowsTotal;
   const totalAmount = subtotal + fees.shippingCost + fees.handlingFee + fees.tax;
+
+  const effectiveDeposit = invoiceInfo.paymentType === 'deposit'
+    ? (invoiceInfo.depositMethod === 'percentage'
+      ? totalAmount * (invoiceInfo.depositPercentage / 100)
+      : invoiceInfo.depositAmount)
+    : 0;
+  const balanceAmount = Math.max(0, totalAmount - effectiveDeposit);
 
   const isCellCovered = (rowId: string, colIndex: number): boolean => {
     const rowMerges = merges[rowId];
@@ -595,6 +606,67 @@ export default function App() {
                   <div className="w-48 border-r border-black px-2 py-1 text-right font-bold uppercase">payment:</div>
                   <div className="flex-1 px-2 py-1 relative"><InlineInput value={invoiceInfo.payment} onChange={(v: string) => setInvoiceInfo({...invoiceInfo, payment: v})} className="font-bold border-none" /></div>
                 </div>
+                <div className="flex group/row">
+                  <div className="w-48 border-r border-black px-2 py-1 text-right font-bold uppercase">Payment Type:</div>
+                  <div className="flex-1 px-2 py-1 relative">
+                    <select
+                      value={invoiceInfo.paymentType}
+                      onChange={(e) => setInvoiceInfo({...invoiceInfo, paymentType: e.target.value as 'full' | 'deposit'})}
+                      className="w-full bg-transparent text-xs font-bold outline-none cursor-pointer"
+                    >
+                      <option value="full">Full Payment</option>
+                      <option value="deposit">Deposit Payment</option>
+                    </select>
+                  </div>
+                </div>
+                {invoiceInfo.paymentType === 'deposit' && (
+                  <>
+                    <div className="flex group/row">
+                      <div className="w-48 border-r border-black px-2 py-1 text-right font-bold uppercase">Deposit Method:</div>
+                      <div className="flex-1 px-2 py-1 relative">
+                        <select
+                          value={invoiceInfo.depositMethod}
+                          onChange={(e) => setInvoiceInfo({...invoiceInfo, depositMethod: e.target.value as 'fixed' | 'percentage'})}
+                          className="w-full bg-transparent text-xs font-bold outline-none cursor-pointer"
+                        >
+                          <option value="fixed">Fixed Amount</option>
+                          <option value="percentage">Percentage (%)</option>
+                        </select>
+                      </div>
+                    </div>
+                    {invoiceInfo.depositMethod === 'fixed' ? (
+                      <div className="flex group/row">
+                        <div className="w-48 border-r border-black px-2 py-1 text-right font-bold uppercase">Deposit Amount:</div>
+                        <div className="flex-1 px-2 py-1 relative">
+                          <input
+                            type="number"
+                            value={invoiceInfo.depositAmount}
+                            onChange={(e) => setInvoiceInfo({...invoiceInfo, depositAmount: Math.max(0, parseFloat(e.target.value) || 0)})}
+                            className="w-full bg-transparent text-xs font-bold outline-none"
+                            min={0}
+                          />
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex group/row">
+                        <div className="w-48 border-r border-black px-2 py-1 text-right font-bold uppercase">Deposit %:</div>
+                        <div className="flex-1 px-2 py-1 relative">
+                          <input
+                            type="number"
+                            value={invoiceInfo.depositPercentage}
+                            onChange={(e) => {
+                              const pct = Math.max(0, Math.min(100, parseFloat(e.target.value) || 0));
+                              setInvoiceInfo({...invoiceInfo, depositPercentage: pct});
+                            }}
+                            className="w-full bg-transparent text-xs font-bold outline-none"
+                            min={0}
+                            max={100}
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
                 {buyerCustomRows.map(row => (
                   <div key={row.id} className="flex group/row">
                     <div className="w-48 border-r border-black px-2 py-1 text-right">
@@ -789,7 +861,7 @@ export default function App() {
                         const insertBeforeIdx = row.type === 'product' ? row.idx : (row.data.beforeRowIndex ?? items.length);
 
                         return (
-                          <tr key={rowKey} className="border-t border-black group relative">
+                          <tr key={rowKey} className={`border-t border-black group relative${row.type === 'custom' ? ' h-10' : ''}`}>
                             <td className="border-r border-black w-5 text-center align-middle p-0">
                               <button
                                 onClick={(e) => {
@@ -839,6 +911,19 @@ export default function App() {
                         {renderSummaryRow('Shipping Cost', fees.shippingCost, (v) => setFees({...fees, shippingCost: v}))}
                         {renderSummaryRow('Handing Fee', fees.handlingFee, (v) => setFees({...fees, handlingFee: v}))}
                         {renderSummaryRow('TOTAL', totalAmount, null, true)}
+                        {invoiceInfo.paymentType === 'deposit' && (
+                          <>
+                            {renderSummaryRow(
+                              invoiceInfo.depositMethod === 'percentage'
+                                ? `Deposit (${invoiceInfo.depositPercentage}%)`
+                                : 'Deposit',
+                              effectiveDeposit,
+                              invoiceInfo.depositMethod === 'fixed' ? (v) => setInvoiceInfo({...invoiceInfo, depositAmount: v}) : null,
+                              false
+                            )}
+                            {renderSummaryRow('Balance', balanceAmount, null, false)}
+                          </>
+                        )}
                       </>
                     );
                   })()}

@@ -74,4 +74,8 @@ export interface InvoiceInfo {
   date: string;
   payment: string;
   currency: string;
+  paymentType: 'full' | 'deposit';
+  depositMethod: 'fixed' | 'percentage';
+  depositAmount: number;
+  depositPercentage: number;
 }

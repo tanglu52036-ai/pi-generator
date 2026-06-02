@@ -50,6 +50,10 @@ export const exportToExcel = async (
   customColumns: { id: string; name: string; insertAfterFixedCol?: number }[] = [],
   customColumnValues: Record<string, Record<string, string>> = {},
   productCustomRows: CustomRowData[] = [],
+  buyerCustomRows: CustomRowData[] = [],
+  remarkCustomRows: CustomRowData[] = [],
+  paypalCustomRows: CustomRowData[] = [],
+  bankCustomRows: CustomRowData[] = [],
 ) => {
   const mergedCols = buildMergedCols(customColumns);
   const tCols = mergedCols.length;
@@ -162,6 +166,16 @@ export const exportToExcel = async (
     r++;
   }
 
+  for (const cr of buyerCustomRows) {
+    cell(r, 1, cr.label, { bold: true, sz: 10, align: 'right' });
+    merge(r, 2, r, tCols, cr.value, { sz: 10, align: 'left' });
+    for (let col = 2; col <= tCols; col++) {
+      ws.getCell(r, col).alignment = { vertical: 'middle', horizontal: 'left', wrapText: true };
+    }
+    h(r, 22);
+    r++;
+  }
+
   r++;
 
   // ============================================================
@@ -195,14 +209,15 @@ export const exportToExcel = async (
   const sortedCustoms = productCustomRows.filter(x => x.beforeRowIndex !== undefined).sort((a, b) => (a.beforeRowIndex ?? 0) - (b.beforeRowIndex ?? 0));
   const legacyCustoms = productCustomRows.filter(x => x.beforeRowIndex === undefined);
 
-  const makeRowData = (item: InvoiceItem | null, label: string, amount: string, n: string | number): (string | number)[] =>
-    mergedCols.map(col => {
+  const makeRowData = (item: InvoiceItem | null, label: string, amount: string, n: string | number): (string | number)[] => {
+    const sanitizeText = (text: string): string => text.normalize('NFC');
+    return mergedCols.map(col => {
       if (col.type !== 'fixed') return item && col.type === 'custom' ? (customColumnValues[item.id]?.[col.col.id] || '') : '';
       switch (col.idx) {
         case 0: return n;
         case 1: return label || (item ? item.SKU : '');
         case 2: return '';
-        case 3: return label ? (item ? '' : label) : (item ? item.Name : '');
+        case 3: return label ? (item ? '' : label) : (item ? sanitizeText(item.Name) : '');
         case 4: return item ? item.quantity : '';
         case 5: return item && item.Unit ? item.Unit : '/';
         case 6: return item ? fmt(item.selectedPrice, info.currency) : '';
@@ -210,6 +225,7 @@ export const exportToExcel = async (
       }
       return '';
     });
+  };
 
   const bodyRows: Array<{ data: (string | number)[] }> = [];
   let ci = 0;
@@ -248,6 +264,13 @@ export const exportToExcel = async (
   const productCustomTotal = productCustomRows.reduce((s, x) => s + (parseFloat(x.value) || 0), 0);
   const subTotal = items.reduce((s, it) => s + it.total, 0) + productCustomTotal;
   const grandTotal = subTotal + fees.shippingCost + fees.handlingFee + fees.tax;
+
+  const effectiveDeposit = info.paymentType === 'deposit'
+    ? (info.depositMethod === 'percentage'
+      ? grandTotal * (info.depositPercentage / 100)
+      : info.depositAmount)
+    : 0;
+  const balanceAmount = Math.max(0, grandTotal - effectiveDeposit);
 
   for (let bi = 0; bi < bodyRows.length; bi++) {
     const rowData = bodyRows[bi];
@@ -333,6 +356,13 @@ export const exportToExcel = async (
   sumRow('Shipping Cost', fmt(fees.shippingCost, info.currency), false);
   sumRow('Handing Fee', fmt(fees.handlingFee, info.currency), false);
   sumRow('TOTAL', fmt(grandTotal, info.currency), true);
+  if (info.paymentType === 'deposit') {
+    const depositLabel = info.depositMethod === 'percentage'
+      ? `Deposit (${info.depositPercentage}%)`
+      : 'Deposit';
+    sumRow(depositLabel, fmt(effectiveDeposit, info.currency), false);
+    sumRow('Balance', fmt(balanceAmount, info.currency), false);
+  }
 
   r++;
 
@@ -354,6 +384,12 @@ export const exportToExcel = async (
     h(r, 20); r++;
   }
 
+  for (const cr of remarkCustomRows) {
+    cell(r, 1, cr.label, { bold: true, sz: 9, align: 'left' });
+    merge(r, 2, r, tCols, cr.value, { sz: 9, align: 'left' });
+    h(r, 20); r++;
+  }
+
   r++;
 
   // ============================================================
@@ -365,6 +401,12 @@ export const exportToExcel = async (
   cell(r, 1, 'ACCOUNT NAME:', { bold: true, sz: 10, align: 'right' });
   merge(r, 2, r, tCols, bank.paypalAccount, { bold: true, sz: 12, align: 'center' });
   h(r, 26); r++;
+
+  for (const cr of paypalCustomRows) {
+    cell(r, 1, cr.label, { bold: true, sz: 10, align: 'right' });
+    merge(r, 2, r, tCols, cr.value, { sz: 10, align: 'left' });
+    h(r, 22); r++;
+  }
 
   r++;
 
@@ -385,6 +427,12 @@ export const exportToExcel = async (
   for (const [label, val] of bankRows) {
     cell(r, 1, label, { bold: true, sz: 9, align: 'right' });
     merge(r, 2, r, tCols, val, { bold: true, sz: 9, align: 'left' });
+    h(r, 22); r++;
+  }
+
+  for (const cr of bankCustomRows) {
+    cell(r, 1, cr.label, { bold: true, sz: 9, align: 'right' });
+    merge(r, 2, r, tCols, cr.value, { bold: true, sz: 9, align: 'left' });
     h(r, 22); r++;
   }
 
